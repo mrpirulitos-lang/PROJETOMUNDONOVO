@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Zelda: Mobile Edition</title>
+    <style>
+        body {
+            background-color: #050505;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            color: white;
+            touch-action: none; /* Impede zoom ao tocar */
+        }
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.9);
+            border: 4px solid #fff;
+            background: #000;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated; 
+            width: 100%;
+            height: 100%;
+        }
+        .ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; padding: 10px; box-sizing: border-box;
+        }
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+            text-shadow: 2px 2px 0 #000;
+        }
+        .hearts { color: red; font-weight: bold; }
+        .dialog-box {
+            position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+            width: 70%; background: rgba(0,0,0,0.9); border: 2px solid #fff; color: #fff;
+            padding: 15px; display: none; text-align: center; font-size: 16px;
+            z-index: 10; min-height: 60px; border-radius: 8px;
+            cursor: pointer; /* Indica que é clicável */
+        }
+        #boss-bar-container {
+            position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
+            width: 300px; height: 10px; background: #333; display: none; border: 1px solid #fff;
+        }
+        #boss-bar {
+            width: 100%; height: 100%; background: #f00; transition: width 0.2s;
+        }
+        
+        /* CONTROLES DE TOQUE */
+        .touch-controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            height: 120px;
+            pointer-events: auto;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+            z-index: 50;
+        }
+        .dpad {
+            position: relative;
+            width: 120px;
+            height: 120px;
+        }
+        .d-btn {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 8px;
+        }
+        .d-btn:active { background: rgba(255, 255, 255, 0.6); }
+        .btn-up { top: 0; left: 40px; }
+        .btn-down { bottom: 0; left: 40px; }
+        .btn-left { top: 40px; left: 0; }
+        .btn-right { top: 40px; right: 0; }
+
+        .action-btn {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .a-btn {
+            width: 70px;
+            height: 70px;
+            background: rgba(255, 0, 0, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            color: white;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+        .a-btn:active { background: rgba(255, 0, 0, 0.8); }
+
+        @keyframes flash {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        .flash-text { animation: flash 0.5s infinite; font-size: 24px; color: gold; font-weight: bold; }
+        
+        #game-over-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: black; color: red; display: none;
+            justify-content: center; align-items: center; flex-direction: column;
+            font-size: 40px; z-index: 100;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="c" width="800" height="600"></canvas>
+    <div class="ui-layer">
+        <div class="hud-top">
+            <div class="hearts" id="hp-display">❤️❤️❤️</div>
+            <div id="zone-display">ZONA: FLORESTA</div>
+        </div>
+        <div class="dialog-box" id="dialog"></div>
+        <div id="boss-bar-container"><div id="boss-bar"></div></div>
+    </div>
+
+    <!-- Controles de Toque -->
+    <div class="touch-controls">
+        <div class="dpad">
+            <div class="d-btn btn-up" data-key="ArrowUp"></div>
+            <div class="d-btn btn-left" data-key="ArrowLeft"></div>
+            <div class="d-btn btn-right" data-key="ArrowRight"></div>
+            <div class="d-btn btn-down" data-key="ArrowDown"></div>
+        </div>
+        <div class="action-btn">
+            <div class="a-btn" data-key=" ">ATK</div>
+        </div>
+    </div>
+
+    <div id="game-over-screen">
+        GAME OVER
+        <span style="font-size: 20px; color: white; margin-top: 20px;">Pressione F5 para reiniciar</span>
+    </div>
+</div>
+
+<script>
+/**
+ * ENGINE SPRITE-PURE - VIDA COMPLETA + MOBILE
+ */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const dialogEl = document.getElementById('dialog');
+const hpEl = document.getElementById('hp-display');
+const zoneEl = document.getElementById('zone-display');
+const bossBarContainer = document.getElementById('boss-bar-container');
+const bossBar = document.getElementById('boss-bar');
+const gameOverScreen = document.getElementById('game-over-screen');
+
+// Constantes
+const TILE = 32;
+
+// Sprites
+const COLORS = {
+ 0: null, 1: '#00aa00', 2: '#006600', 3: '#ffccaa', 4: '#ffffff', 5: '#000000', 
+ 6: '#daa520', 7: '#8b4513', 8: '#f00', 9: '#00f', 10: '#ccc', 11: '#333', 12: '#555'
+};
+
+const SPRITES = {
+ link_idle: [
+  [0,0,0,1,1,1,0,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,3,3,3,3,3,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,2,2,2,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,0,2,0,2,0,0],
+  [0,0,0,5,0,5,0,0]
+ ],
+ link_walk_1: [
+  [0,0,0,1,1,1,0,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,3,3,3,3,3,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,2,2,2,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,2,0,0,0,2,0],
+  [0,0,5,0,0,0,5,0]
+ ],
+ sword_strike: [
+  [0,0,0,1,1,1,0,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,3,3,3,3,3,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,2,2,2,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,0,2,0,2,0,0],
+  [0,0,0,5,0,5,0,0]
+ ],
+ keese: [
+  [0,0,1,1,1,0,0],
+  [0,1,1,1,1,1,0],
+  [1,1,1,1,1,1,1],
+  [0,1,1,1,1,1,0],
+  [0,0,1,0,1,0,0],
+  [0,0,0,0,0,0,0]
+ ],
+ stalfos: [
+  [0,0,0,1,1,0,0],
+  [0,0,1,1,1,1,0],
+  [0,0,1,1,1,1,0],
+  [0,0,0,1,1,0,0],
+  [0,0,1,0,1,0,0],
+  [0,0,1,0,1,0,0]
+ ],
+ boss_dark_link: [
+  [0,0,0,1,1,1,0,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,1,1,1,1,0],
+  [0,0,1,1,1,1,1,0]
+ ],
+ npc: [
+     [0,0,0,9,9,9,0,0],
+     [0,0,9,9,9,9,9,0],
+     [0,0,3,3,3,3,3,0],
+     [0,0,9,9,9,9,9,0],
+     [0,0,9,9,9,9,9,0],
+     [0,0,0,9,0,9,0,0],
+     [0,0,0,9,0,9,0,0],
+     [0,0,0,5,0,5,0,0]
+ ]
+};
+
+function drawSprite(ctx, spriteMap, x, y, w, h) {
+ const rows = spriteMap.length;
+ const cols = spriteMap[0].length;
+ const cellW = w / cols;
+ const cellH = h / rows;
+
+ for(let r=0; r<rows; r++) {
+  for(let c=0; c<cols; c++) {
+   let val = spriteMap[r][c];
+   if(val !== 0) {
+    ctx.fillStyle = COLORS[val] || '#f0f';
+    ctx.fillRect(x + c*cellW, y + r*cellH, cellW+0.5, cellH+0.5);
+   }
+  }
+ }
+}
+
+// Definição dos Mapas (Biomas)
+const MAPS = [
+ // 0: Floresta (Verde)
+ {
+  name: "FLORESTA SAGRADA",
+  layout: [],
+  groundColor: "#2a5",
+  wallColor: "#1a3",
+ },
+ // 1: Cidade (Pedra/Cinza)
+ {
+  name: "CIDADE DE HYLIA",
+  layout: [],
+  groundColor: "#999",
+  wallColor: "#666",
+ },
+ // 2: Deserto (Areia)
+ {
+  name: "DESERTO ARID",
+  layout: [],
+  groundColor: "#e6c288",
+  wallColor: "#b89b66",
+ },
+ // 3: Castelo (Escuro)
+ {
+  name: "CASTELO DA ESCURIDÃO",
+  layout: [],
+  groundColor: "#111",
+  wallColor: "#000",
+ }
+];
+
+// Preencher layouts padrão
+for(let i=0; i<MAPS.length; i++) {
+ let h = 30;
+ let w = 40;
+ let map = [];
+ for(let y=0; y<h; y++) {
+  let row = [];
+  for(let x=0; x<w; x++) {
+   if(y===0||y===h-1||x===0||x===w-1) row.push(1);
+   else row.push(0);
+  }
+  map.push(row);
+ }
+ MAPS[i].layout = map;
+ MAPS[i].width = w;
+ MAPS[i].height = h;
+}
+
+// Estado do Jogo
+const game = {
+ keys: {},
+ camera: {x:0, y:0},
+ currentMapIndex: 0,
+ entities: [],
+ particles: [],
+ player: null,
+ frame: 0,
+ bossActive: false,
+ isGameOver: false
+};
+
+class Entity {
+ constructor(x, y, type, opts={}) {
+  this.x = x; this.y = y;
+  this.type = type;
+  this.w = 24; this.h = 24;
+  this.dir = 'down';
+  this.hp = 3;
+  this.maxHp = 3;
+  this.dead = false;
+  this.vx = 0;
+  this.vy = 0;
+  this.onGround = false;
+  
+  // Propriedades de Dano
+  this.damageCooldown = 0; // Tempo invulnerável após levar dano
+  this.lastDamageTime = 0;
+
+  if(type === 'link') {
+   this.maxHp = 3;
+   this.anim = 0;
+   this.attackTimer = 0;
+   this.hasSword = true;
+   this.canJump = true;
+  }
+  if(type === 'keese') {
+   this.hp = 1;
+   this.speed = 1.5;
+   this.patrolCenter = {x:x, y:y};
+  }
+  if(type === 'stalfos') {
+   this.hp = 2;
+   this.speed = 0.8;
+  }
+  if(type === 'boss') {
+   this.hp = 20;
+   this.maxHp = 20;
+   this.w = 48;
+   this.h = 48;
+   this.speed = 1.2;
+  }
+  if(type === 'portal') {
+   this.target = opts.target;
+   this.tx = opts.tx;
+   this.ty = opts.ty;
+  }
+  if(type === 'npc') {
+      this.msg = opts.msg;
+      this.currentMsgIndex = 0;
+      this.dialogHistory = []; // Para guardar mensagens já lidas
+  }
+ }
+
+ update() {
+  if(this.dead) return;
+  
+  // Decrescer cooldown de dano
+  if(this.damageCooldown > 0) this.damageCooldown--;
+
+  if(this.type === 'link') this.handleInput();
+  if(this.type === 'keese') this.aiKeese();
+  if(this.type === 'stalfos') this.aiChase();
+  if(this.type === 'boss') this.aiBoss();
+  
+  if(this.moving) this.anim += 0.2;
+  else this.anim = 0;
+  
+  if(this.attackTimer > 0) this.attackTimer--;
+  
+  // Limitar ao mapa
+  const map = MAPS[game.currentMapIndex];
+  const maxX = map.width * TILE;
+  const maxY = map.height * TILE;
+  this.x = Math.max(0, Math.min(this.x, maxX - this.w));
+  this.y = Math.max(0, Math.min(this.y, maxY - this.h));
+  
+  // Queda no vazio (Parkour)
+  if(this.y > maxY && this.type === 'link') {
+   this.takeDamage(1);
+   this.y = 5 * TILE;
+   this.x = 5 * TILE;
+  }
+ }
+
+ handleInput() {
+  let dx=0, dy=0;
+  if(game.keys['ArrowUp']||game.keys['w']||game.keys['W']) { dy=-2; this.dir='up'; }
+  if(game.keys['ArrowDown']||game.keys['s']||game.keys['S']) { dy=2; this.dir='down'; }
+  if(game.keys['ArrowLeft']||game.keys['a']||game.keys['A']) { dx=-2; this.dir='left'; }
+  if(game.keys['ArrowRight']||game.keys['d']||game.keys['D']) { dx=2; this.dir='right'; }
+
+  if(dx!==0 || dy!==0) {
+   if(!this.checkWall(this.x+dx, this.y)) this.x+=dx;
+   if(!this.checkWall(this.x, this.y+dy)) this.y+=dy;
+   this.moving = true;
+  } else {
+   this.moving = false;
+  }
+
+  if(game.keys[' '] && this.attackTimer===0) this.action();
+ }
+
+ aiKeese() {
+  this.x += Math.sin(game.frame * 0.1) * 2;
+  this.y += Math.cos(game.frame * 0.1) * 2;
+  if(Math.hypot(this.x - game.player.x, this.y - game.player.y) < 20) {
+   this.x += (game.player.x - this.x) * 0.1;
+   this.y += (game.player.y - this.y) * 0.1;
+  }
+ }
+
+ aiChase() {
+  const dist = Math.hypot(game.player.x - this.x, game.player.y - this.y);
+  if(dist < 200) {
+   if(game.player.x > this.x) this.x += this.speed;
+   if(game.player.x < this.x) this.x -= this.speed;
+   if(game.player.y > this.y) this.y += this.speed;
+   if(game.player.y < this.y) this.y -= this.speed;
+   
+   if(game.player.x > this.x) this.dir = 'right';
+   if(game.player.x < this.x) this.dir = 'left';
+   if(game.player.y > this.y) this.dir = 'down';
+   if(game.player.y < this.y) this.dir = 'up';
+  }
+  
+  // Lógica de Dano por Colisão (Inimigo bate em Link)
+  if(this.type !== 'link' && !this.dead && game.player) {
+      if(Math.abs(this.x - game.player.x) < 20 && Math.abs(this.y - game.player.y) < 20) {
+          this.tryDamagePlayer(game.player);
+      }
+  }
+ }
+
+ aiBoss() {
+  const dist = Math.hypot(game.player.x - this.x, game.player.y - this.y);
+  if(dist < 300) {
+   if(game.player.x > this.x) this.x += this.speed;
+   if(game.player.x < this.x) this.x -= this.speed;
+   if(game.player.y > this.y) this.y += this.speed;
+   if(game.player.y < this.y) this.y -= this.speed;
+   
+   if(game.player.x > this.x) this.dir = 'right';
+   if(game.player.x < this.x) this.dir = 'left';
+   if(game.player.y > this.y) this.dir = 'down';
+   if(game.player.y < this.y) this.dir = 'up';
+   
+   if(Math.random() < 0.02) this.action();
+  }
+  
+  // Lógica de Dano por Colisão (Boss bate em Link)
+  if(this.type !== 'link' && !this.dead && game.player) {
+      if(Math.abs(this.x - game.player.x) < 30 && Math.abs(this.y - game.player.y) < 30) {
+          this.tryDamagePlayer(game.player);
+      }
+  }
+ }
+
+ checkWall(nx, ny) {
+  let c = Math.floor((nx)/TILE);
+  let r = Math.floor((ny)/TILE);
+  const map = MAPS[game.currentMapIndex];
+  if(r<0 || r>=map.height || c<0 || c>=map.width) return true;
+  let tile = map.layout[r][c];
+  return tile === 1;
+ }
+
+ action() {
+  this.attackTimer = 15;
+  createSlash(this);
+  
+  let ax=this.x, ay=this.y;
+  if(this.dir==='up') ay-=30;
+  if(this.dir==='down') ay+=30;
+  if(this.dir==='left') ax-=30;
+  if(this.dir==='right') ax+=30;
+
+  game.entities.forEach(e => {
+   if(e.type !== 'link' && !e.dead) {
+    if(Math.abs(ax-e.x)<30 && Math.abs(ay-e.y)<30) {
+     e.takeDamage(1);
+     createParticles(e.x, e.y, '#fff', 5);
+    }
+   }
+  });
+  
+  // Lógica de Portal: Só ativa se o jogador ATACAR nele
+  game.entities.forEach(e => {
+   if(e.type === 'portal' && Math.hypot(ax-e.x, ay-e.y) < 30) {
+    changeMap(e.target, e.tx, e.ty);
+   }
+  });
+ }
+
+ tryDamagePlayer(target) {
+     // Se o alvo for o jogador e ele NÃO estiver invulnerável
+     if(target.type === 'link' && target.damageCooldown <= 0) {
+         target.takeDamage(1);
+     }
+ }
+
+ takeDamage(dmg) {
+  this.hp -= dmg;
+  if(this.hp <= 0) this.dead = true;
+  
+  // Ativar invencibilidade temporária
+  this.damageCooldown = 60; // 60 frames (1 segundo) de invencibilidade
+  
+  updateUI();
+  if(this.type === 'boss') updateBossBar();
+  
+  if(this.type === 'link' && this.hp <= 0) {
+      gameOver();
+  }
+ }
+
+ draw(ctx) {
+  if(this.dead) return;
+  
+  // Efeito de piscar quando toma dano
+  if(this.damageCooldown > 0 && Math.floor(game.frame / 4) % 2 === 0) {
+      ctx.globalAlpha = 0.5;
+  }
+
+  let sprite = SPRITES.link_idle;
+  if(this.type === 'link') {
+   if(this.attackTimer > 5) sprite = SPRITES.sword_strike;
+   else if(this.moving) sprite = (Math.floor(this.anim)%2===0) ? SPRITES.link_idle : SPRITES.link_walk_1;
+   
+   let ox=0, oy=0;
+   if(this.dir==='left') ox = -10;
+   if(this.dir==='up') oy = -10;
+   
+   drawSprite(ctx, sprite, this.x - 12 + ox, this.y - 16 + oy, 24, 24);
+   
+   if(this.attackTimer > 5) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(this.x + (this.dir==='right'?10:-20), this.y - 5, 20, 4);
+   }
+  } else if (this.type === 'keese') {
+   drawSprite(ctx, SPRITES.keese, this.x-12, this.y-12, 24, 24);
+  } else if (this.type === 'stalfos') {
+   drawSprite(ctx, SPRITES.stalfos, this.x-12, this.y-12, 24, 24);
+  } else if (this.type === 'boss') {
+   drawSprite(ctx, SPRITES.boss_dark_link, this.x-24, this.y-24, 48, 48);
+  } else if (this.type === 'portal') {
+   // Efeito de brilho no portal
+   ctx.fillStyle = `rgba(255, 255, 255, ${0.5 + Math.sin(Date.now()/200)*0.5})`;
+   ctx.beginPath();
+   ctx.arc(this.x, this.y, 15, 0, Math.PI*2);
+   ctx.fill();
+  } else if (this.type === 'npc') {
+      drawSprite(ctx, SPRITES.npc, this.x-12, this.y-16, 24, 24);
+  }
+  
+  ctx.globalAlpha = 1;
+ }
+}
+
+function createParticles(x, y, color, count) {
+ for(let i=0; i<count; i++) {
+  game.particles.push({
+   x:x, y:y, vx:(Math.random()-0.5)*4, vy:(Math.random()-0.5)*4,
+   life: 20, color: color
+  });
+ }
+}
+
+function createSlash(entity) {
+ game.particles.push({type:'slash', dir:entity.dir, life:5, x:entity.x, y:entity.y});
+}
+
+function changeMap(index, x, y) {
+ game.currentMapIndex = index;
+ loadMap(index, x, y);
+}
+
+function loadMap(index, spawnX, spawnY) {
+ const mapData = MAPS[index];
+ zoneEl.innerText = "ZONA: " + mapData.name.toUpperCase();
+ 
+ game.entities = [];
+ 
+ game.player = new Entity(spawnX, spawnY, 'link');
+ game.entities.push(game.player);
+ 
+ // Spawnar Inimigos baseado no bioma
+ if(index === 0) { 
+  for(let i=0; i<5; i++) game.entities.push(new Entity(Math.random()*1000, Math.random()*800, 'keese'));
+  // NPC da Floresta
+  game.entities.push(new Entity(10*TILE, 10*TILE, 'npc', {msg: ["A floresta está morrendo...", "O Guardião foi corrompido pelo vilão."]}));
+ }
+ if(index === 1) { 
+  for(let i=0; i<4; i++) game.entities.push(new Entity(Math.random()*1000, Math.random()*800, 'stalfos'));
+  // NPC da Cidade
+  game.entities.push(new Entity(15*TILE, 15*TILE, 'npc', {msg: ["Os Cavaleiros caíram um por um.", "Você é nossa última esperança."]}));
+ }
+ if(index === 2) { 
+  for(let i=0; i<6; i++) game.entities.push(new Entity(Math.random()*1000, Math.random()*800, 'keese'));
+  // NPC do Deserto
+  game.entities.push(new Entity(20*TILE, 20*TILE, 'npc', {msg: ["A Serpente devora tudo que toca.", "Cuidado!"]}));
+ }
+ if(index === 3) { 
+  game.entities.push(new Entity(20*TILE, 15*TILE, 'boss'));
+  bossBarContainer.style.display = 'block';
+  // NPC do Castelo
+  game.entities.push(new Entity(10*TILE, 10*TILE, 'npc', {msg: ["Ele está lá!", "Derrote-o e salve Hyrule!"]}));
+ }
+ 
+ // Portal para a próxima fase (se não for o boss final)
+ if(index < 3) {
+  // Coloca o portal longe do spawn
+  game.entities.push(new Entity(35*TILE, 28*TILE, 'portal', {target: index+1, tx: 5*TILE, ty: 5*TILE}));
+ }
+}
+
+// Loop Principal
+function loop() {
+ ctx.fillStyle = '#000';
+ ctx.fillRect(0,0,canvas.width, canvas.height);
+
+ game.frame++;
+ const map = MAPS[game.currentMapIndex];
+ 
+ // Desenhar Fundo
+ ctx.fillStyle = map.groundColor;
+ ctx.fillRect(0,0,canvas.width, canvas.height);
+
+ // Atualizar Lógica
+ game.entities.forEach(e => e.update());
+ 
+ // Câmera Suave
+ let p = game.player;
+ let tx = p.x - canvas.width/2;
+ let ty = p.y - canvas.height/2;
+ 
+ game.camera.x += (tx - game.camera.x) * 0.1;
+ game.camera.y += (ty - game.camera.y) * 0.1;
+
+ // Renderização
+ ctx.save();
+ ctx.translate(-game.camera.x, -game.camera.y);
+
+ // Desenhar Mapa
+ let startC = Math.floor(game.camera.x/TILE);
+ let endC = startC + (canvas.width/TILE) + 1;
+ let startR = Math.floor(game.camera.y/TILE);
+ let endR = startR + (canvas.height/TILE) + 1;
+
+ for(let r=startR; r<=endR; r++) {
+  for(let c=startC; c<=endC; c++) {
+   if(r>=0 && r<map.height && c>=0 && c<map.width) {
+    let tile = map.layout[r][c];
+    let x = c*TILE, y = r*TILE;
+    
+    if(tile === 1) { // Parede
+     ctx.fillStyle = map.wallColor;
+     ctx.fillRect(x,y,TILE,TILE);
+     ctx.strokeStyle='#000'; ctx.strokeRect(x,y,TILE,TILE);
+    }
+   }
+  }
+ }
+
+ // Ordenar por Y para profundidade
+ game.entities.sort((a,b)=>a.y-b.y);
+ game.entities.forEach(e => e.draw(ctx));
+
+ // Partículas
+ for(let i=game.particles.length-1; i>=0; i--) {
+  let p = game.particles[i];
+  p.life--;
+  if(p.life<=0) { game.particles.splice(i,1); continue; }
+  
+  if(p.type === 'slash') {
+   ctx.strokeStyle = '#fff';
+   ctx.lineWidth = 3;
+   ctx.beginPath();
+   if(p.dir==='right') ctx.arc(p.x+20, p.y, 20, -Math.PI/2, Math.PI/2);
+   if(p.dir==='left') ctx.arc(p.x-20, p.y, 20, Math.PI/2, -Math.PI/2);
+   if(p.dir==='down') ctx.arc(p.x, p.y+20, 20, 0, Math.PI);
+   if(p.dir==='up') ctx.arc(p.x, p.y-20, 20, Math.PI, 0);
+   ctx.stroke();
+  } else {
+   ctx.fillStyle = p.color;
+   ctx.fillRect(p.x, p.y, 3, 3);
+  }
+ }
+
+ ctx.restore();
+ requestAnimationFrame(loop);
+}
+
+// Input & Setup
+window.addEventListener('keydown', e => {
+ game.keys[e.key] = true;
+ if(e.key === ' ') {
+  let nearby = game.entities.find(e => e.type==='npc' && Math.hypot(e.x-game.player.x, e.y-game.player.y)<40);
+  if(nearby) showDialog(nearby);
+ }
+ if(e.key === 'z' || e.key === 'Z' || e.key === 'Enter') {
+     // Pula para a próxima mensagem
+     advanceDialog();
+ }
+ if(e.key === 'Escape') dialogEl.style.display = 'none';
+});
+window.addEventListener('keyup', e => game.keys[e.key] = false);
+
+// Configuração de Touch (Celular/Tablet)
+const touchBtns = document.querySelectorAll('.d-btn, .a-btn');
+touchBtns.forEach(btn => {
+ const key = btn.getAttribute('data-key');
+ 
+ const press = (e) => {
+  e.preventDefault();
+  game.keys[key] = true;
+  if(key === ' ' && game.player) {
+      let nearby = game.entities.find(e => e.type==='npc' && Math.hypot(e.x-game.player.x, e.y-game.player.y)<40);
+      if(nearby) showDialog(nearby);
+  }
+ };
+ 
+ const release = (e) => {
+  e.preventDefault();
+  game.keys[key] = false;
+ };
+ 
+ btn.addEventListener('mousedown', press);
+ btn.addEventListener('mouseup', release);
+ btn.addEventListener('mouseleave', release);
+ 
+ btn.addEventListener('touchstart', press, {passive: false});
+ btn.addEventListener('touchend', release, {passive: false});
+});
+
+// Sistema de Diálogo Avançado
+let activeNPC = null;
+let currentMsgIndex = 0;
+
+function showDialog(npcEntity) {
+    if (!npcEntity) return;
+    
+    // Se o NPC tem histórico de mensagens, mostra a próxima
+    if (npcEntity.dialogHistory && npcEntity.dialogHistory[currentMsgIndex]) {
+        showText(npcEntity.dialogHistory[currentMsgIndex]);
+        currentMsgIndex++;
+    } else {
+        // Caso contrário, mostra a mensagem inicial
+        let msg = npcEntity.msg;
+        if (Array.isArray(msg)) {
+            npcEntity.dialogHistory = [...msg]; // Cria cópia
+            showText(msg[0]);
+            currentMsgIndex = 1;
+        } else {
+            showText(msg);
+            currentMsgIndex = 1;
+        }
+    }
+    
+    activeNPC = npcEntity;
+}
+
+function showText(text) {
+    dialogEl.innerHTML = text.replace(/\n/g,'<br>');
+    dialogEl.style.display = 'block';
+}
+
+function advanceDialog() {
+    if (!activeNPC) return;
+    
+    if (activeNPC.dialogHistory && currentMsgIndex < activeNPC.dialogHistory.length) {
+        showText(activeNPC.dialogHistory[currentMsgIndex]);
+        currentMsgIndex++;
+    } else {
+        // Fecha a caixa de diálogo se não houver mais mensagens
+        dialogEl.style.display = 'none';
+        activeNPC = null;
+        currentMsgIndex = 0;
+    }
+}
+
+// Adiciona clique na caixa de diálogo para avançar (mobile)
+dialogEl.addEventListener('click', () => {
+    advanceDialog();
+});
+
+function updateUI() {
+ hpEl.innerHTML = '';
+ for(let i=0; i<game.player.hp; i++) hpEl.innerHTML += '❤️';
+}
+
+function updateBossBar() {
+ const boss = game.entities.find(e => e.type === 'boss');
+ if(boss) {
+  const pct = (boss.hp / boss.maxHp) * 100;
+  bossBar.style.width = pct + '%';
+  if(boss.hp <= 0) {
+   bossBarContainer.style.background = '#0f0';
+   // Cena Final
+   setTimeout(() => {
+       dialogEl.innerHTML = '<span class="flash-text">AAAAAAAAHHHHH!</span><br>O LINK SEGURA A OCARINA AZUL.<br><br>CONTINUA NO PRÓXIMO CAPÍTULO';
+       dialogEl.style.display = 'block';
+       dialogEl.classList.add('flash-text');
+   }, 1000);
+  }
+ }
+}
+
+function gameOver() {
+    gameOverScreen.style.display = 'flex';
+}
+
+// Iniciar
+loadMap(0, 5*TILE, 5*TILE);
+loop();
+
+</script>
+</body>
+</html>
